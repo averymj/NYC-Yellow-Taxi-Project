@@ -221,4 +221,63 @@ print(rmse)
 vif(taxi_model_log, type = "predictor")
 AIC(taxi_model_log)
 plot(taxi_model_log)
+
+#The residuals plot has a set of residuals that decrease in a linear fashion as the fitted values get bigger. To investigate this further, I took a small random sample of 200 observations from my current sample of around 245k to get a closer look at the specific observation points.
+
+set.seed(123)
+taxi_clean_small <- taxi_clean %>%
+  slice_sample(n = 200) %>%
+  collect()
+
+taxi_model_2 <- lm(log_tip ~ log_fare + log_duration + payment_type + PULocationID + pickup_hour, data = taxi_clean_small)
+summary(taxi_model_2)
+
+plot(taxi_model_log_2)
+
+ggplot(taxi_clean_small, aes(x = fitted(taxi_model_log_2), y = residuals(taxi_model_2))) +
+  geom_point() +
+  geom_text_repel(aes(label = rownames(taxi_clean_small)))
+
+
+#The observations from the plot
+taxi_clean_small[c(3, 32, 37, 55, 124, 134, 143, 150, 187), "PULocationID"]
+
+#After taking a small subset of my sample, I see that the log tip for these observations all equal 0. This data has a mass constant of tips around $1, and the log of 1 is equal to 0, hence why it creates a downward residual line.
+
+#Solution: Create a binary indicator variable for flat tipping behavior
+taxi_clean$flat_tip <- ifelse(taxi_clean$tip_amount <= 1, 1, 0)
+str(taxi_clean)
+
+taxi_model_3 <- lm(log_tip ~ log_fare + log_duration + payment_type + pickup_hour + flat_tip, data = taxi_clean)
+summary(final_model)
+
+pred_log_3 <- predict(taxi_model_3, newdata = taxi_clean)
+pred <- exp(pred_log_3) - 1
+mae <- mean(abs(taxi_clean$tip_amount - pred))
+print(mae)
+rmse <- sqrt(mean((taxi_clean$tip_amount - pred)^2))
+print(rmse)
+vif(taxi_model_3, type = "predictor")
+AIC(taxi_model_3)
+plot(taxi_model_3)
+
+
+#Still see the straight downward line on the residuals plot
+#Plot Cook's Distance and remove high leverage outliers
+
+cooks <- cooks.distance(taxi_model_3)
+taxi_clean2 <- taxi_clean[cooks < (4 / nrow(taxi_clean)), ]
+
+taxi_model_4 <- lm(log_tip ~ log_fare + log_duration + payment_type + pickup_hour + flat_tip, data = taxi_clean2)
+summary(taxi_model_4)
+pred_log_4 <- predict(taxi_model_4, newdata = taxi_clean2)
+pred <- exp(pred_log_4) - 1
+mae <- mean(abs(taxi_clean2$tip_amount - pred))
+print(mae)
+rmse <- sqrt(mean((taxi_clean2$tip_amount - pred)^2))
+print(rmse)
+vif(taxi_model_3, type = "predictor")
+AIC(taxi_model_3)
+
+plot(taxi_model_4)
 ```
