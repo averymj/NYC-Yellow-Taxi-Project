@@ -1,0 +1,219 @@
+---
+title: "Taxi Project Ver 2"
+author: "Avery John"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Import Libraries
+```{r}
+library(arrow)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+```
+
+#Import Parquet File
+```{r}
+#We decided to subset the data by focusing on 10% of the observations of a specific month. In this case, we're subsetting 10% of the data in January 2022.
+
+taxi <- read_parquet(file.choose())
+taxi %>%
+  count() %>%
+  collect() #2463931 observations
+
+#Taking about 10% of the data as our sample
+set.seed(123)
+taxi_sample <- taxi %>%
+  slice_sample(n = 250000) %>%
+  collect()
+
+taxi_sample %>%
+  count() %>%
+  collect()
+```
+
+#Exploring the Data
+```{r}
+str(taxi_sample)
+summary(taxi_sample)
+colSums(is.na(taxi_sample)) #Some NA values present in RatecodeID
+```
+
+#Cleaning the Data
+```{r}
+summary(taxi_sample$trip_distance)
+#The max distance is 306,159 miles, which seems wildly off.
+
+taxi_sample %>% filter(trip_distance == max(trip_distance))
+#This observation had a total amount of $22.2, which doesn't correlate with the trip distance (unless they were traveling to the moon). Before further analysis, I decided to remove this extreme outlier. 
+
+#Cleaning trip distance
+taxi_clean <- taxi_sample %>%
+  filter(trip_distance > 0,
+         trip_distance < 100)
+
+#At this point, I thought the best move was to clean the fare amount and tip amount variables
+taxi_clean <- taxi_clean %>%
+  filter(fare_amount > 0)
+
+taxi_clean <- taxi_clean %>%
+  filter(tip_amount >= 0)
+
+#I created a trip duration variable to merge the dropoff and pickup time and convert them to minutes (correlates with trip distance)
+taxi_clean <- taxi_clean %>%
+  mutate(trip_duration = as.numeric(difftime(tpep_dropoff_datetime,
+                                             tpep_pickup_datetime,
+                                             units = "mins")))
+str(taxi_clean) #New column called trip_duration
+taxi_clean <- taxi_clean %>%
+  filter(trip_duration > 0,
+         trip_duration < 300) #Cap at 5 hours
+
+taxi_clean %>% count(RatecodeID)
+taxi_clean <- taxi_clean %>%
+  filter(!is.na(RatecodeID),
+         RatecodeID != 99)
+
+taxi_clean$pickup_hour <- hour(taxi_clean$tpep_pickup_datetime)
+
+taxi_clean <- taxi_clean %>%
+  filter(payment_type == 1 | payment_type == 2)
+
+str(taxi_clean) #New column called pickup_hour and payment_type filtered to credit card and cash
+```
+
+#Insight 1: Tipping behavior varies significantly by pickup zone, with zone 132 (JFK Airport) having a high average tip amount
+```{r}
+taxi_clean %>% count(PULocationID, sort = TRUE)
+#Top 5 PU Zones: 236 (Manhattan UES North), 237 (Manhattan UES South), 132 (JFK Airport), 161 (Midtown Center), 186 (Penn Station)
+
+top_5_zones <- taxi_clean %>% 
+  filter(PULocationID == 132 | PULocationID == 161 | PULocationID == 186 | PULocationID == 236 | PULocationID == 237) %>%
+  mutate(PULocationID = dplyr::recode(PULocationID,
+                               '132' = 'JFK Airport',
+                               '161' = 'Midtown Center',
+                               '186' = 'Penn Station',
+                               '236' = 'UES North',
+                               '237' = 'UES South'))
+
+summary_zones <- top_5_zones %>%
+  group_by(PULocationID) %>%
+  summarise(average_tip = mean(tip_amount, na.rm = TRUE))
+
+ggplot(summary_zones, aes(x = factor(PULocationID), y = average_tip, fill = factor(PULocationID))) +
+  stat_summary(fun = mean, geom = "bar") +
+  geom_text(aes(label = round(average_tip, 2)), vjust = -0.5) +
+  labs(title = "Average Tip Amount in Top 5 Pickup Zones",
+       x = "Pickup Location",
+       y = "Average Tip Amount") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+#Insight 2: Higher fare amount and longer trip duration are both positively associated with higher average tip amount
+```{r}
+top_5_zones %>%
+  mutate(fare_bin = cut(fare_amount,
+                        breaks = c(0, 5, 20, 50, 100, 400))) %>%
+  group_by(fare_bin) %>%
+  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = fare_bin, y = avg_tip, fill = fare_bin)) +
+  geom_col() +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(title = "Average Tip Amount by Fare",
+       x = "Fare Amount Levels ($)",
+       y = "Average Tip ($)") +
+  theme(legend.position = "none")
+
+top_5_zones %>%
+  mutate(duration_bin = cut(trip_duration,
+                        breaks = c(0, 10, 15, 20, 100, 300))) %>%
+  group_by(duration_bin) %>%
+  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = duration_bin, y = avg_tip, fill = duration_bin)) +
+  geom_col() +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(title = "Average Tip Amount by Trip Duration",
+       x = "Length of Trip (Minutes)",
+       y = "Average Tip ($)") +
+  theme(legend.position = "none")
+
+#Fare amount and trip duration are dependent on one another. Longer trips typically result in higher fare amounts. 
+```
+
+#Insight 3: Tips are generally higher between 4pm and 7pm across the top 5 pickup zones
+```{r}
+top_5_zones$pickup_hour <- hour(top_5_zones$tpep_pickup_datetime)
+
+hour_labels <- format(strptime(0:23, "%H"), "%I %p")
+hour_labels <- sub("^0", "", hour_labels)
+
+top_5_zones %>%
+  group_by(pickup_hour) %>%
+  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = factor(pickup_hour,
+               levels = 0:23,
+               labels = hour_labels), y = avg_tip, fill = "steelblue")) +
+  geom_col() +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(title = "Average Tip Amount by Hour",
+       x = "Hour",
+       y = "Average Tip ($)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme(legend.position = "none")
+
+```
+
+#Insight 4: People who pay with credit card are more likely to tip than people who pay with cash
+```{r}
+taxi_clean %>% count(payment_type, sort = TRUE)
+
+taxi_clean %>%
+  mutate(payment_type = dplyr::recode(payment_type,
+                                      '1' = 'Credit Card',
+                                      '2' = 'Cash')) %>%
+  group_by(payment_type) %>%
+  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = payment_type, y = avg_tip, fill = payment_type)) +
+  geom_col() +
+  geom_text(aes(label = round(avg_tip, 2)), vjust = -0.5) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(title = "Average Tip Amount by Payment Type",
+       x = "Payment Type",
+       y = "Average Tip ($)") +
+  theme(legend.position = "none")
+```
+
+#Regression Model
+```{r}
+#The data appears very skewed and not in line with the assumptions of linear regression. The next step to take is to attempt a log transformation.
+taxi_clean$PULocationID <- factor(taxi_clean$PULocationID)
+taxi_clean$payment_type <- factor(taxi_clean$payment_type)
+
+taxi_clean <- taxi_clean %>%
+  mutate(
+    log_fare = log(fare_amount + 1),
+    log_tip = log(tip_amount + 1),
+    log_distance = log(trip_distance + 1),
+    log_duration = log(trip_duration + 1)
+  )
+
+taxi_model_log <- lm(log_tip ~ log_fare + log_duration + payment_type + PULocationID + pickup_hour, data = taxi_clean)
+summary(taxi_model_log)
+
+#Error Metrics
+pred_log <- predict(taxi_model_log, newdata = taxi_clean)
+pred <- exp(pred_log) - 1
+mae <- mean(abs(taxi_clean$tip_amount - pred))
+print(mae)
+rmse <- sqrt(mean((taxi_clean$tip_amount - pred)^2))
+print(rmse)
+vif(taxi_model_log, type = "predictor")
+AIC(taxi_model_log)
+```
