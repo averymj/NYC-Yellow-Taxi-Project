@@ -16,6 +16,7 @@ library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(scales)
+library(car)
 ```
 
 #Import Parquet File
@@ -219,4 +220,5 @@ rmse <- sqrt(mean((taxi_clean$tip_amount - pred)^2))
 print(rmse)
 vif(taxi_model_log, type = "predictor")
 AIC(taxi_model_log)
+plot(taxi_model_log)
 ```
