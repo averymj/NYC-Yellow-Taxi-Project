@@ -58,7 +58,7 @@ taxi_clean <- taxi_sample %>%
   filter(trip_distance > 0,
          trip_distance < 100)
 
-#At this point, I thought the best move was to clean the fare amount and tip amount variables
+#Cleaning fare and tip amount
 taxi_clean <- taxi_clean %>%
   filter(fare_amount > 0)
 
@@ -75,13 +75,16 @@ taxi_clean <- taxi_clean %>%
   filter(trip_duration > 0,
          trip_duration < 300) #Cap at 5 hours
 
+#Cleaning RatecodeID (dropping null/99)
 taxi_clean %>% count(RatecodeID)
 taxi_clean <- taxi_clean %>%
   filter(!is.na(RatecodeID),
-         RatecodeID != 99)
+         RatecodeID != 99) 
 
+#I also created a pickup hour variable to collect the pickup hour of each observation
 taxi_clean$pickup_hour <- hour(taxi_clean$tpep_pickup_datetime)
 
+#Then, I cleaned the payment type variable
 taxi_clean <- taxi_clean %>%
   filter(payment_type == 1 | payment_type == 2)
 
@@ -116,7 +119,27 @@ ggplot(summary_zones, aes(x = factor(PULocationID), y = average_tip, fill = fact
   theme(legend.position = "none")
 ```
 
-#Insight 2: Higher fare amount and longer trip duration are both positively associated with higher average tip amount
+#Insight 2: People who pay with credit card are more likely to tip than people who pay with cash
+```{r}
+taxi_clean %>% count(payment_type, sort = TRUE)
+
+taxi_clean %>%
+  mutate(payment_type = dplyr::recode(payment_type,
+                                      '1' = 'Credit Card',
+                                      '2' = 'Cash')) %>%
+  group_by(payment_type) %>%
+  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
+  ggplot(aes(x = payment_type, y = avg_tip, fill = payment_type)) +
+  geom_col() +
+  geom_text(aes(label = round(avg_tip, 2)), vjust = -0.5) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(title = "Average Tip Amount by Payment Type",
+       x = "Payment Type",
+       y = "Average Tip ($)") +
+  theme(legend.position = "none")
+```
+
+#Insight 3: Higher fare amount and longer trip duration are both positively associated with higher average tip amount
 ```{r}
 top_5_zones %>%
   mutate(fare_bin = cut(fare_amount,
@@ -147,7 +170,7 @@ top_5_zones %>%
 #Fare amount and trip duration are dependent on one another. Longer trips typically result in higher fare amounts. 
 ```
 
-#Insight 3: Tips are generally higher between 4pm and 7pm across the top 5 pickup zones
+#Insight 4: Tips are generally higher between 4pm and 7pm across the top 5 pickup zones
 ```{r}
 top_5_zones$pickup_hour <- hour(top_5_zones$tpep_pickup_datetime)
 
@@ -170,32 +193,12 @@ top_5_zones %>%
 
 ```
 
-#Insight 4: People who pay with credit card are more likely to tip than people who pay with cash
+#Multiple Linear Regression Model
 ```{r}
-taxi_clean %>% count(payment_type, sort = TRUE)
-
-taxi_clean %>%
-  mutate(payment_type = dplyr::recode(payment_type,
-                                      '1' = 'Credit Card',
-                                      '2' = 'Cash')) %>%
-  group_by(payment_type) %>%
-  summarise(avg_tip = mean(tip_amount, na.rm = TRUE)) %>%
-  ggplot(aes(x = payment_type, y = avg_tip, fill = payment_type)) +
-  geom_col() +
-  geom_text(aes(label = round(avg_tip, 2)), vjust = -0.5) +
-  scale_y_continuous(labels = scales::label_dollar()) +
-  labs(title = "Average Tip Amount by Payment Type",
-       x = "Payment Type",
-       y = "Average Tip ($)") +
-  theme(legend.position = "none")
-```
-
-#Regression Model
-```{r}
-#The data appears very skewed and not in line with the assumptions of linear regression. The next step to take is to attempt a log transformation.
 taxi_clean$PULocationID <- factor(taxi_clean$PULocationID)
 taxi_clean$payment_type <- factor(taxi_clean$payment_type)
 
+#Tipping data is often very skewed and not in line with the assumptions of linear regression. To get a model that satisfies the linear regression assumptions, the next step to take is to perform a log transformation.
 taxi_clean <- taxi_clean %>%
   mutate(
     log_fare = log(fare_amount + 1),
