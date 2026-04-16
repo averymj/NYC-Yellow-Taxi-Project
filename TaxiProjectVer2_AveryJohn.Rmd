@@ -29,7 +29,7 @@ taxi %>%
   count() %>%
   collect() #2463931 observations
 
-#Taking about 10% of the data as our sample
+#Taking about 10% of the data as our sample, which is approximately 250,000 observations.
 set.seed(123)
 taxi_sample <- taxi %>%
   slice_sample(n = 250000) %>%
@@ -44,7 +44,7 @@ taxi_sample %>%
 ```{r}
 str(taxi_sample)
 summary(taxi_sample)
-colSums(is.na(taxi_sample)) #Some NA values present in RatecodeID
+colSums(is.na(taxi_sample)) #Some NA values present in RatecodeID, passenger_count, store_and_fwd_flag, congestion_surcharge and airport_fee; However, we don't end up using these variables in our final model.
 ```
 
 #Cleaning the Data
@@ -53,7 +53,7 @@ summary(taxi_sample$trip_distance)
 #The max distance is 306,159 miles, which seems wildly off.
 
 taxi_sample %>% filter(trip_distance == max(trip_distance))
-#This observation had a total amount of $22.2, which doesn't correlate with the trip distance (unless they were traveling to the moon). Before further analysis, I decided to remove this extreme outlier. 
+#This observation had a total amount of $22.2, which doesn't correlate with the trip distance (unless they were traveling to the moon). Before further analysis, I decided to remove this data point as it is considered an influential point. 
 
 #Cleaning trip distance
 taxi_clean <- taxi_sample %>%
@@ -209,17 +209,17 @@ taxi_clean <- taxi_clean %>%
     log_duration = log(trip_duration + 1)
   )
 
-taxi_model_log <- lm(log_tip ~ log_fare + log_duration + payment_type + PULocationID + pickup_hour, data = taxi_clean)
-summary(taxi_model_log)
+final_model <- lm(log_tip ~ log_fare + log_duration + payment_type + PULocationID + pickup_hour, data = taxi_clean)
+summary(final_model)
 
 #Error Metrics
-pred_log <- predict(taxi_model_log, newdata = taxi_clean)
+pred_log <- predict(final_model, newdata = taxi_clean)
 pred <- exp(pred_log) - 1
 mae <- mean(abs(taxi_clean$tip_amount - pred))
 print(mae)
 rmse <- sqrt(mean((taxi_clean$tip_amount - pred)^2))
 print(rmse)
-vif(taxi_model_log, type = "predictor")
+vif(final_model, type = "predictor") #Low VIF for all predictor variables
 AIC(taxi_model_log)
 plot(taxi_model_log)
 
@@ -233,8 +233,6 @@ taxi_clean_small <- taxi_clean %>%
 taxi_model_small <- lm(log_tip ~ log_fare + log_duration + payment_type + PULocationID + pickup_hour, data = taxi_clean_small)
 summary(taxi_model_small)
 
-plot(taxi_model_small)
-
 ggplot(taxi_clean_small, aes(x = fitted(taxi_model_small), y = residuals(taxi_model_small))) +
   geom_point() +
   geom_text_repel(aes(label = rownames(taxi_clean_small)))
@@ -245,7 +243,7 @@ taxi_clean_small[c(5, 32, 35, 37, 46, 124, 134, 143, 163, 165, 173, 179, 181), "
 
 #After taking a small subset of my sample, I see that the log tip for these observations all equal 0. To get a log_tip of 0, that means the tip amount had to equal $1, since log(1) = 0. In this case, we'd expect to see a floor effect, where the residuals plateau in a flat pattern. However, because this model is trying to fit a linear structure, the residuals go downward to minimize squared error.
 
-#Solution: Create a binary indicator variable for flat tipping behavior
+#Possible Solution: Create a binary indicator variable for flat tipping behavior
 taxi_clean$flat_tip <- ifelse(taxi_clean$tip_amount <= 1, 1, 0)
 str(taxi_clean)
 
@@ -253,7 +251,7 @@ taxi_model_3 <- lm(log_tip ~ log_fare + log_duration + payment_type + pickup_hou
 summary(final_model)
 plot(taxi_model_3)
 
-#A downward linear trend still exists even after adding a flat tip. Given this fact, we can conclude that this data is a nonlinear dataset, which reflects the complexities of real-world datasets. Upon further research, a different type of model (such as a generalized additive model (GAM https://multithreaded.stitchfix.com/blog/2015/07/30/gam/)) would likely be a better fit for this data. 
+#A downward linear trend still exists even after adding a flat tip. Given this fact, we can conclude that this data is inherently a nonlinear dataset, which reflects the complexities of real-world datasets, especially tipping data. Upon further research, a different type of model (such as a quadratic regression model or a generalized additive model (GAM https://multithreaded.stitchfix.com/blog/2015/07/30/gam/)) would likely be a better fit for this data. 
 
 #However, since the purpose of this project is to build a linear regression model, the final model we'll be using is the first log-log model (taxi_model_log), as it is consistent in terms of interpretability and integration with the interactive dashboard.
 ```
