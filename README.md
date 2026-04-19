@@ -4,3 +4,5 @@ A data analysis project analyzing tipping behavior in NYC 2022 and building a li
 Download January 2022 NYC Yellow Taxi Trip Records parquet file from https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.pageLinks 
 
 View the R-shiny app here: https://dianer.shinyapps.io/NYCTaxiTipping/
+
+View our Presentation here: https://youtu.be/wXWf0ZDGTNs 
